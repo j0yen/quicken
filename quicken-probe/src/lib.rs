@@ -6,6 +6,10 @@
 //! classify each primitive's **liveness** with a structured `Verdict` and its
 //! supporting `Evidence`, all read-only and with no network access.
 //!
+//! The [`crossdep`] module adds a primitive→primitive enablement graph so each
+//! verdict can name what it is `blocked_by` and what reviving a dark primitive
+//! `would_upgrade`.
+//!
 //! # Usage
 //!
 //! ```
@@ -16,12 +20,14 @@
 //! println!("{}: {:?}", report.name, report.verdict);
 //! ```
 
+pub mod crossdep;
 pub mod env;
 pub mod evidence;
 pub mod probes;
 pub mod report;
 pub mod verdict;
 
+pub use crossdep::{annotate, canonical_edges, AnnotatedReport, Effect, EnablementEdge};
 pub use env::ProbeEnv;
 pub use evidence::{Evidence, EvidencePair};
 pub use probes::{AgentnsProbe, MemlogProbe, ProvfsProbe, WardenProbe};
