@@ -194,7 +194,7 @@ pub(crate) fn apply_safe_steps(
 }
 
 /// Short human label for a tier.
-fn tier_label(tier: &Tier) -> &'static str {
+const fn tier_label(tier: &Tier) -> &'static str {
     match tier {
         Tier::SafeUserspace => "safe-userspace",
         Tier::RequiresSudo => "requires-sudo",
