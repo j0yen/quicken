@@ -116,7 +116,7 @@ pub struct AnnotatedReport {
 }
 
 /// Source is considered "dark" when it is not `Live`.
-fn is_dark(verdict: &Verdict) -> bool {
+const fn is_dark(verdict: &Verdict) -> bool {
     !matches!(verdict, Verdict::Live)
 }
 
@@ -176,7 +176,7 @@ pub fn annotate(
 
         let from_dark = verdict_map
             .get(edge.from.as_str())
-            .map_or(false, |v| is_dark(v));
+            .is_some_and(|v| is_dark(v));
 
         if from_dark {
             // `to` is affected by `from` being dark.

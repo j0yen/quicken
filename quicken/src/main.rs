@@ -78,7 +78,7 @@ enum Command {
     /// Run all primitive probes and report verdicts.
     ///
     /// Default output is a human-readable table.
-    /// Use --json for machine-parseable output (includes blocked_by / would_upgrade).
+    /// Use --json for machine-parseable output (includes `blocked_by` / `would_upgrade`).
     /// Use --deps for a table with cross-dependency annotations (blocked-by / would-upgrade column).
     ///
     /// Exit codes: 0=all-Live/LiveDegraded, 1=any-worse, 2=error
@@ -270,10 +270,7 @@ fn print_table(reports: &[quicken_probe::PrimitiveReport]) {
 
 /// Print a human-readable table with cross-dependency annotations.
 fn print_deps_table(annotated: &[AnnotatedReport]) {
-    println!(
-        "{:<12}  {:<28}  {:<20}  {}",
-        "PRIMITIVE", "VERDICT", "BLOCKED-BY", "WOULD-UPGRADE"
-    );
+    println!("{:<12}  {:<28}  {:<20}  WOULD-UPGRADE", "PRIMITIVE", "VERDICT", "BLOCKED-BY");
     println!("{}", "-".repeat(100));
     for a in annotated {
         let verdict_str = verdict_display(&a.report.verdict);
