@@ -17,6 +17,7 @@ path = "src/main.rs"
 [dependencies]
 quicken-probe = { path = "../quicken-probe" }
 clap = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 sigpipe = "0.1"

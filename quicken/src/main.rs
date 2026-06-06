@@ -1,17 +1,20 @@
-//! `quicken` — wintermute kernel primitive liveness checker.
+//! `quicken` — wintermute kernel primitive liveness checker and remediation tool.
 //!
-//! Runs all four primitive probes and reports their verdicts.
-//!
-//! Usage:
-//!   quicken probe           — human-readable table
-//!   quicken probe --json    — JSON array of `PrimitiveReport`
-//!   quicken probe --deps    — table with blocked-by / would-upgrade column
-//!   quicken deps            — print the static enablement edge set
+//! Subcommands:
+//!   quicken probe              — human-readable table of all primitive verdicts
+//!   quicken probe --json       — JSON array of `PrimitiveReport` (with dep graph)
+//!   quicken probe --deps       — table with blocked-by / would-upgrade column
+//!   quicken deps               — print the static enablement edge set
+//!   quicken remedy             — print (dry-run) remediation for all dark primitives
+//!   quicken remedy --apply     — apply `SafeUserspace` steps; print the rest
+//!   quicken remedy --json      — JSON array of `Remediation`
 //!
 //! Exit codes:
-//!   0 — all primitives are `Live` or `LiveDegraded`
+//!   0 — all primitives are `Live` or `LiveDegraded` (probe); or remediation succeeded
 //!   1 — at least one primitive is worse than `LiveDegraded`
 //!   2 — internal error (should not occur in normal use)
+
+mod remedy;
 
 use std::process;
 
@@ -20,6 +23,8 @@ use quicken_probe::{
     annotate, canonical_edges, AgentnsProbe, AnnotatedReport, MemlogProbe, Probe, ProbeEnv,
     ProvfsProbe, Verdict, WardenProbe,
 };
+
+use remedy::{apply_safe_steps, remediation_for, CommandExecutor, ShellExecutor};
 
 fn main() {
     // SIGPIPE: prevent panic on broken pipe (e.g. `quicken probe | head`).
@@ -30,6 +35,7 @@ fn main() {
     let exit_code = match cli.command {
         Command::Probe { json, deps } => run_probe(json, deps),
         Command::Deps => run_deps(),
+        Command::Remedy { apply, json } => run_remedy(apply, json),
     };
     process::exit(exit_code);
 }
@@ -72,7 +78,7 @@ enum Command {
     /// Run all primitive probes and report verdicts.
     ///
     /// Default output is a human-readable table.
-    /// Use --json for machine-parseable output (includes blocked_by / would_upgrade).
+    /// Use --json for machine-parseable output (includes `blocked_by` / `would_upgrade`).
     /// Use --deps for a table with cross-dependency annotations (blocked-by / would-upgrade column).
     ///
     /// Exit codes: 0=all-Live/LiveDegraded, 1=any-worse, 2=error
@@ -95,6 +101,26 @@ enum Command {
     ///
     /// Output is JSON by default.
     Deps,
+
+    /// Show remediation steps for all dark primitives.
+    ///
+    /// Default (--dry-run / --print): prints the ordered remediation steps for
+    /// every non-live primitive, tagged by tier. No commands are executed.
+    ///
+    /// --apply: executes only `SafeUserspace` steps and prints (but does not run)
+    /// all `RequiresSudo` / `RequiresReboot` / `ReportOnly` steps. Re-probes affected
+    /// primitives afterwards and reports the new verdict.
+    ///
+    /// --json: emits a machine-readable JSON array of `Remediation` objects.
+    Remedy {
+        /// Execute `SafeUserspace` steps. Print (do not run) all other tiers.
+        #[arg(long, conflicts_with = "json")]
+        apply: bool,
+
+        /// Emit JSON array of `Remediation` instead of a human-readable table.
+        #[arg(long, conflicts_with = "apply")]
+        json: bool,
+    },
 }
 
 /// Run all probes and return an exit code.
@@ -143,6 +169,89 @@ fn run_deps() -> i32 {
     0
 }
 
+/// Run the remedy subcommand and return an exit code.
+fn run_remedy(apply: bool, json_output: bool) -> i32 {
+    let env = ProbeEnv::default();
+    let probes: Vec<Box<dyn Probe>> = vec![
+        Box::new(MemlogProbe),
+        Box::new(AgentnsProbe),
+        Box::new(WardenProbe),
+        Box::new(ProvfsProbe),
+    ];
+
+    let reports: Vec<_> = probes.iter().map(|p| p.probe(&env)).collect();
+
+    // Collect remediations for non-live primitives only.
+    let remediations: Vec<_> = reports.iter().filter_map(remediation_for).collect();
+
+    if remediations.is_empty() {
+        println!("All primitives are Live — nothing to remedy.");
+        return 0;
+    }
+
+    if json_output {
+        match serde_json::to_string_pretty(&remediations) {
+            Ok(s) => println!("{s}"),
+            Err(e) => {
+                eprintln!("quicken: JSON serialization error: {e}");
+                return 2;
+            }
+        }
+        return 0;
+    }
+
+    if apply {
+        // --apply: run SafeUserspace steps; print everything else.
+        let mut executor: Box<dyn CommandExecutor> = Box::new(ShellExecutor);
+        for rem in &remediations {
+            println!("\n=== Remediation: {} ===", rem.primitive);
+            match apply_safe_steps(rem, executor.as_mut()) {
+                Ok(n) => println!("  {n} SafeUserspace step(s) applied."),
+                Err(e) => {
+                    eprintln!("quicken: remedy apply failed for '{}': {e}", rem.primitive);
+                    return 1;
+                }
+            }
+        }
+
+        // Re-probe affected primitives.
+        println!("\n=== Re-probe after apply ===");
+        let recheck: Vec<_> = probes.iter().map(|p| p.probe(&env)).collect();
+        print_table(&recheck);
+        let all_ok = recheck.iter().all(|r| r.verdict.is_acceptable());
+        return i32::from(!all_ok);
+    }
+
+    // Default: dry-run / print.
+    print_remediations(&remediations);
+    // Exit 1 = there are primitives that need remediation.
+    1
+}
+
+/// Print remediation steps in a human-readable format.
+fn print_remediations(remediations: &[remedy::Remediation]) {
+    for rem in remediations {
+        println!("\n=== Remedy: {} ===", rem.primitive);
+        for (i, step) in rem.steps.iter().enumerate() {
+            let tier_label = match step.tier {
+                remedy::Tier::SafeUserspace => "[safe-userspace]",
+                remedy::Tier::RequiresSudo => "[requires-sudo]",
+                remedy::Tier::RequiresReboot => "[requires-reboot]",
+                remedy::Tier::ReportOnly => "[report-only]",
+            };
+            println!("  Step {}: {tier_label}", i + 1);
+            if !step.command.is_empty() {
+                println!("    command:  {}", step.command);
+            }
+            if step.requires_reboot {
+                println!("    reboot:   yes");
+            }
+            println!("    rationale: {}", step.rationale);
+        }
+    }
+    println!();
+}
+
 /// Print a human-readable table of probe results (plain, no dep annotations).
 fn print_table(reports: &[quicken_probe::PrimitiveReport]) {
     // Header
@@ -161,10 +270,7 @@ fn print_table(reports: &[quicken_probe::PrimitiveReport]) {
 
 /// Print a human-readable table with cross-dependency annotations.
 fn print_deps_table(annotated: &[AnnotatedReport]) {
-    println!(
-        "{:<12}  {:<28}  {:<20}  {}",
-        "PRIMITIVE", "VERDICT", "BLOCKED-BY", "WOULD-UPGRADE"
-    );
+    println!("{:<12}  {:<28}  {:<20}  WOULD-UPGRADE", "PRIMITIVE", "VERDICT", "BLOCKED-BY");
     println!("{}", "-".repeat(100));
     for a in annotated {
         let verdict_str = verdict_display(&a.report.verdict);
