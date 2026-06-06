@@ -1,0 +1,113 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "prd_source": "/home/jsy/wintermute/autobuilder/PRD-quicken-probe.md",
+  "root_motivation": "Turn hand-discovered, re-found-each-tick anomalies about inert wintermute kernel primitives (memlog/agentns/warden/provfs) into a structured, one-command read-only liveness detector — the sibling of binstale/vigil but for the never-activated axis rather than the stale-but-running axis.",
+  "user_persona": "Joe (wintermute admin) running `quicken probe` after any kernel or package update to confirm every primitive is Live before trusting the system; also used as a cron-gate in the build pipeline.",
+  "unfakeable_metric": {
+    "name": "acceptance_tests_passing",
+    "lower_is_better": false,
+    "harness_command": "cargo test --workspace 2>&1 | grep -E '^test result' | awk '{print $4}' | paste -sd+ | bc",
+    "target": 7
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "`cargo build --release` produces a `quicken` binary; `quicken probe --help` lists the probe subcommand and the `--json` flag.",
+      "test": "tests/acceptance_ac1.rs — run `quicken probe --help` and assert `--json` appears in output; assert binary exists at target/release/quicken"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "Each of the four probes returns the correct Verdict against a fixture ProbeEnv with known inputs (golden tests): fixture /dev/memlog with real-world perms + no group membership → InstalledNotActivated; all-zeros agent_session → Inert; comm:-form provfs xattr → LiveDegraded; 128-bit-hex → Live.",
+      "test": "tests/acceptance_ac2.rs — fixture-based golden tests for all four probes"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "MemlogProbe returns StagedNotInstalled when the fixture pkg dir contains a higher pkgrel than the fixture installed version, and the evidence records both pkgrels (deterministic on the known 5-vs-11 fixture).",
+      "test": "tests/acceptance_ac3.rs — pkgrel fixture with installed=5, staged=11"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "`quicken probe --json` emits valid JSON deserializable back into Vec<PrimitiveReport> (round-trip test).",
+      "test": "tests/acceptance_ac4.rs — run binary with --json, deserialize output"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "`quicken probe` exits non-zero when any primitive verdict is worse than LiveDegraded, and zero when all are Live/LiveDegraded (tested via two fixture environments).",
+      "test": "tests/acceptance_ac5.rs — integration test via two ProbeEnv fixtures"
+    },
+    {
+      "id": "AC6",
+      "level": "MUST",
+      "description": "No probe panics on a missing surface (absent dev node, unreadable proc file, no xattr) — each maps to Unknown or Inert with evidence, never a crash.",
+      "test": "tests/acceptance_ac6.rs — all probes against completely empty tmpdir, assert no panic and verdict != panic"
+    },
+    {
+      "id": "AC7",
+      "level": "MUST",
+      "description": "Tests perform zero network access and zero writes outside the test tmpdir; a test asserts the probe path is pure-read (cloud-build-safe).",
+      "test": "tests/acceptance_ac7.rs — run test suite under network-blocked env and assert exit 0"
+    }
+  ],
+  "scope": [
+    "Workspace at ~/wintermute/quicken with quicken-probe lib crate and quicken binary",
+    "Four probes: MemlogProbe, AgentnsProbe, WardenProbe, ProvfsProbe",
+    "Verdict enum: Live, LiveDegraded, StagedNotInstalled, InstalledNotActivated, Inert, Unknown",
+    "Evidence struct with key/value pairs and free-text detail",
+    "ProbeEnv abstraction for fixture-based testing",
+    "CLI: quicken probe and quicken probe --json",
+    "Non-zero exit when any primitive worse than LiveDegraded"
+  ],
+  "non_goals": [
+    "Not a daemon — quicken-probe is a read-only CLI, not a monitoring daemon",
+    "Not a fixer — it only classifies, never writes or attempts to activate primitives",
+    "Not a replacement for vigil/binstale — different axis (never-activated vs stale-but-running)",
+    "No network calls — fully offline, no remote lookup of package info",
+    "No write operations — read-only throughout (no /proc writes, no pkg installs)"
+  ],
+  "hard_constraints": {
+    "rust_edition": "2021",
+    "target_kind": "cli",
+    "deny_unsafe": true,
+    "max_deps": 8,
+    "msrv": "1.85",
+    "additional": {
+      "workspace_members": "quicken-probe (lib), quicken (bin)",
+      "sigpipe_reset": "first line of main() per self_sigpipe_panic_toolkit"
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why do you want a CLI that probes kernel primitive liveness?",
+      "a": "Because today I discover inert primitives by running three separate bash commands and reading the journal — each tick re-discovers the same anomaly."
+    },
+    {
+      "why": 2,
+      "q": "Why is re-discovering the same anomaly each tick a problem?",
+      "a": "Because it costs time and the drift widens unnoticed — installed pkgrel is 5, built pkgrel is 11, and nothing structurally tracks this gap."
+    },
+    {
+      "why": 3,
+      "q": "Why does the gap widening go unnoticed?",
+      "a": "Because the signal is only in the journal as free-text — no structured detector exists for the never-activated axis."
+    },
+    {
+      "why": 4,
+      "q": "Why does a structured detector solve this when journaling didn't?",
+      "a": "Because a read-only CLI can be a pipeline gate: CI blocks on inert primitives, self-review calls it, and the verdict is machine-parseable JSON."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "Should quicken-probe be a separate crate or merged with quicken binary?",
+      "resolution": "Separate lib crate (quicken-probe) + thin binary (quicken) in a workspace, so sibling PRDs (quicken-attest, quicken-crossdep, quicken-remedy) can depend on the lib without re-importing the CLI."
+    }
+  ],
+  "created_at": "2026-06-05T00:00:00Z",
+  "intent_slug": "quicken-probe"
+}

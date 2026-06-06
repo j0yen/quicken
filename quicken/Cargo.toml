@@ -1,0 +1,22 @@
+[package]
+name = "quicken"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+description = "Wintermute kernel primitive liveness checker — one command, full verdict"
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "quicken"
+path = "src/main.rs"
+
+[dependencies]
+quicken-probe = { path = "../quicken-probe" }
+clap = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+sigpipe = "0.1"

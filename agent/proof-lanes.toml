@@ -1,0 +1,35 @@
+# proof-lanes.toml — change-class → required-lane routing.
+# READ-ONLY after scaffold.
+
+[[lane]]
+id = "rust-source"
+description = "Behavior changes in src/"
+globs = ["quicken-probe/src/**/*.rs", "quicken/src/**/*.rs"]
+required_commands = [
+  "cargo check --workspace",
+  "cargo clippy --workspace -- -D warnings",
+  "cargo test --workspace",
+]
+
+[[lane]]
+id = "rust-tests"
+description = "Test-only changes"
+globs = ["tests/**/*.rs", "quicken-probe/tests/**/*.rs", "quicken/tests/**/*.rs"]
+required_commands = [
+  "cargo test --workspace",
+]
+
+[[lane]]
+id = "deps"
+description = "Cargo.toml / Cargo.lock changes"
+globs = ["Cargo.toml", "Cargo.lock", "quicken-probe/Cargo.toml", "quicken/Cargo.toml"]
+required_commands = [
+  "cargo check --workspace",
+  "cargo deny check bans licenses sources",
+]
+
+[[lane]]
+id = "ci"
+description = "GitHub Actions workflow changes"
+globs = [".github/workflows/**"]
+required_commands = []
