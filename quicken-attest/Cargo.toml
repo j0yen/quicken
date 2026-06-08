@@ -1,24 +1,21 @@
 [package]
-name = "quicken"
-version = "0.4.0"
+name = "quicken-attest"
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
-description = "Wintermute kernel primitive liveness checker — one command, full verdict"
+description = "Wintermute quicken attest — persist liveness receipts, compute deltas, track inert streaks"
 publish = false
 
 [lints]
 workspace = true
 
-[[bin]]
-name = "quicken"
-path = "src/main.rs"
-
 [dependencies]
 quicken-probe = { path = "../quicken-probe" }
-quicken-attest = { path = "../quicken-attest" }
-clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-sigpipe = "0.1"
+chrono = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

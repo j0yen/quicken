@@ -8,6 +8,9 @@
 //!   quicken remedy             — print (dry-run) remediation for all dark primitives
 //!   quicken remedy --apply     — apply `SafeUserspace` steps; print the rest
 //!   quicken remedy --json      — JSON array of `Remediation`
+//!   quicken attest             — probe + write receipt + print delta/streaks
+//!   quicken attest --json      — machine-readable attest output
+//!   quicken attest --no-write  — probe + print delta/streaks without writing
 //!
 //! Exit codes:
 //!   0 — all primitives are `Live` or `LiveDegraded` (probe); or remediation succeeded
@@ -36,6 +39,7 @@ fn main() {
         Command::Probe { json, deps } => run_probe(json, deps),
         Command::Deps => run_deps(),
         Command::Remedy { apply, json } => run_remedy(apply, json),
+        Command::Attest { json, no_write } => run_attest(json, no_write),
     };
     process::exit(exit_code);
 }
@@ -120,6 +124,23 @@ enum Command {
         /// Emit JSON array of `Remediation` instead of a human-readable table.
         #[arg(long, conflicts_with = "apply")]
         json: bool,
+    },
+
+    /// Probe primitives, persist a liveness receipt, and print delta/streaks.
+    ///
+    /// Writes a timestamped receipt to ~/.local/share/quicken/receipts/,
+    /// loads the most recent prior receipt, computes a per-primitive delta,
+    /// and tracks an inert-streak counter per primitive.
+    ///
+    /// Exit codes: 0=all-Live/LiveDegraded, 1=any-worse, 2=error
+    Attest {
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+
+        /// Compute and print results without writing a receipt file.
+        #[arg(long = "no-write")]
+        no_write: bool,
     },
 }
 
@@ -226,6 +247,131 @@ fn run_remedy(apply: bool, json_output: bool) -> i32 {
     print_remediations(&remediations);
     // Exit 1 = there are primitives that need remediation.
     1
+}
+
+/// Run attest: probe + receipt + delta + streaks.
+fn run_attest(json_output: bool, no_write: bool) -> i32 {
+    let env = ProbeEnv::default();
+    let probes: Vec<Box<dyn Probe>> = vec![
+        Box::new(MemlogProbe),
+        Box::new(AgentnsProbe),
+        Box::new(WardenProbe),
+        Box::new(ProvfsProbe),
+    ];
+
+    let reports: Vec<_> = probes.iter().map(|p| p.probe(&env)).collect();
+
+    let store_path = quicken_attest::ReceiptStore::default_path();
+    let store = quicken_attest::ReceiptStore::new(&store_path);
+    let clock = quicken_attest::SystemClock;
+
+    // Read boot_id from /proc/sys/kernel/random/boot_id (real system).
+    let boot_id = std::fs::read_to_string("/proc/sys/kernel/random/boot_id")
+        .map_or_else(|_| "unknown".to_owned(), |s| s.trim().to_owned());
+
+    let result = match quicken_attest::attest(&reports, &clock, &boot_id, &store) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("quicken attest: error computing receipt: {e}");
+            return 2;
+        }
+    };
+
+    if !no_write {
+        if let Err(e) = store.write(&result.receipt) {
+            eprintln!("quicken attest: failed to write receipt: {e}");
+            return 2;
+        }
+    }
+
+    if json_output {
+        print_attest_json(&result);
+    } else {
+        print_attest_table(&result);
+    }
+
+    let all_acceptable = reports.iter().all(|r| r.verdict.is_acceptable());
+    i32::from(!all_acceptable)
+}
+
+/// Print attest result as JSON.
+fn print_attest_json(result: &quicken_attest::AttestResult) {
+    let deltas: Vec<serde_json::Value> = result
+        .deltas
+        .iter()
+        .map(|(name, d)| {
+            let kind_str = match &d.kind {
+                quicken_attest::DeltaKind::NoPrior => "NoPrior".to_owned(),
+                quicken_attest::DeltaKind::Unchanged => "Unchanged".to_owned(),
+                quicken_attest::DeltaKind::Improved => "Improved".to_owned(),
+                quicken_attest::DeltaKind::Regressed => "Regressed".to_owned(),
+                quicken_attest::DeltaKind::EvidenceChanged { detail } => {
+                    format!("EvidenceChanged: {detail}")
+                }
+                quicken_attest::DeltaKind::NewPrimitive => "NewPrimitive".to_owned(),
+            };
+            serde_json::json!({ "name": name, "delta": kind_str })
+        })
+        .collect();
+
+    let streaks: Vec<serde_json::Value> = result
+        .streaks
+        .iter()
+        .map(|(name, s)| {
+            serde_json::json!({
+                "name": name,
+                "inert_streak": s.inert_streak,
+                "severity": s.severity,
+            })
+        })
+        .collect();
+
+    let out = serde_json::json!({
+        "taken_at": result.receipt.taken_at,
+        "boot_id": result.receipt.boot_id,
+        "reports": result.receipt.reports,
+        "deltas": deltas,
+        "streaks": streaks,
+    });
+
+    match serde_json::to_string_pretty(&out) {
+        Ok(s) => println!("{s}"),
+        Err(e) => eprintln!("quicken attest: JSON serialization error: {e}"),
+    }
+}
+
+/// Print attest result as a human-readable table.
+fn print_attest_table(result: &quicken_attest::AttestResult) {
+    println!("Liveness receipt — {}", result.receipt.taken_at.format("%Y-%m-%d %H:%M:%S UTC"));
+    println!("boot_id: {}", result.receipt.boot_id);
+    println!();
+    println!("{:<12}  {:<28}  {:<14}  STREAK", "PRIMITIVE", "VERDICT", "DELTA");
+    println!("{}", "-".repeat(90));
+
+    for r in &result.receipt.reports {
+        let verdict_str = verdict_display(&r.verdict);
+        let delta_str = result
+            .deltas
+            .iter()
+            .find(|(n, _)| n == &r.name)
+            .map_or("-".to_owned(), |(_, d)| match &d.kind {
+                quicken_attest::DeltaKind::NoPrior => "no-prior".to_owned(),
+                quicken_attest::DeltaKind::Unchanged => "unchanged".to_owned(),
+                quicken_attest::DeltaKind::Improved => "improved".to_owned(),
+                quicken_attest::DeltaKind::Regressed => "REGRESSED".to_owned(),
+                quicken_attest::DeltaKind::EvidenceChanged { detail } => {
+                    format!("evidence: {detail}")
+                }
+                quicken_attest::DeltaKind::NewPrimitive => "new".to_owned(),
+            });
+        let streak_str = result
+            .streaks
+            .iter()
+            .find(|(n, _)| n == &r.name)
+            .map_or(String::new(), |(_, s)| s.severity.clone());
+        println!("{:<12}  {:<28}  {:<14}  {streak_str}", r.name, verdict_str, delta_str);
+    }
+    println!();
 }
 
 /// Print remediation steps in a human-readable format.

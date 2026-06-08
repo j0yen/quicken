@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.0 — 2026-06-07
+
+Add quicken-attest: persist timestamped liveness receipts, compute per-primitive
+deltas (Unchanged/Improved/Regressed/EvidenceChanged), and track inert-streak
+counters indexed by distinct boot_id. Adds `quicken attest` subcommand with
+--json and --no-write flags. All 7 ACs covered; clock/boot_id/store fully
+injectable for deterministic cloud-safe tests.
+
 ## v0.3.0 — 2026-06-05
 
 Add quicken remedy subcommand: remediation engine for dark wintermute primitives.

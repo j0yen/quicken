@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "quicken-probe",
+    "quicken-attest",
     "quicken",
 ]
 resolver = "2"
