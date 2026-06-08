@@ -1,69 +1,45 @@
 # quicken
 
-Wintermute kernel primitive liveness checker — one command, full verdict.
+The reason dark primitives rot is that the self-review escalates each one
 
-`quicken` classifies every wintermute kernel primitive's runtime liveness with a structured verdict and its supporting evidence. A primitive can be compiled, packaged, installed, and still be runtime-inert (`/dev/memlog` exists but the user isn't in the `memlog` group; `/proc/self/agent_session` is all-zeros; `bpolicy status` says `loaded: false`). `quicken probe` surfaces all of that in one command.
+## Overview
 
-## Usage
+The reason dark primitives rot is that the self-review escalates each one
+"once" and then goes silent — so the same finding reappears boot after boot with
+no sense of *how long* it's been broken or whether it's getting worse.
+`quicken-attest` extends the `quicken` workspace to persist a timestamped
+liveness receipt, compute a delta against the previous one, and keep a monotonic
+per-primitive **inert-streak counter** so a primitive that stays dark gets
+*louder* over consecutive boots instead of fading into the noise.
 
+
+## Acceptance
+
+
+1. `quicken attest --help` documents `--json` and `--no-write`.
+2. `quicken attest` writes a well-formed receipt to the injected store path and
+   the file round-trips back into the receipt type (golden test).
+3. Given a seeded prior receipt and a current set of reports, the computed
+   `Delta` is correct for each case — `Unchanged`, `Regressed` (Live→Inert),
+   `Improved` (Inert→Live), and `EvidenceChanged` (memlog pkgrel 5→11, verdict
+   unchanged) — asserted on fixtures.
+4. `inert_streak` counts only distinct `boot_id`s: three prior receipts across
+   two boot ids with the primitive dark yields the correct consecutive-boot
+   streak (tested on a seeded receipt history).
+5. The streak-band wording escalates: a fixture with streak `1`, `3`, and `7`
+   produces the three distinct severity strings (asserted).
+6. `quicken attest --no-write` produces identical stdout to `quicken attest` but
+   creates no receipt file (asserted: store dir unchanged).
+7. Tests perform **zero network access and write only inside the injected store
+   tmpdir** (cloud-build-safe); `boot_id` and clock are injected, never read from
+   the real host in tests (consistent with the no-`Date::now` constraint).
+
+## Install
+
+```sh
+cargo install --path .
 ```
-quicken probe           # human-readable table
-quicken probe --json    # JSON array of PrimitiveReport
-```
-
-Example output:
-
-```
-PRIMITIVE     VERDICT                       EVIDENCE
---------------------------------------------------------------------------------
-memlog        InstalledNotActivated         dev_node_path=/dev/memlog dev_node_exists=true ...
-agentns       Inert                         agent_session_raw=000...000
-warden        Inert                         bpolicy_status_raw={"loaded": false}
-provfs        Unknown                       error=path does not exist
-```
-
-Exit codes: `0` = all primitives are `Live` or `LiveDegraded`; `1` = at least one is worse.
-
-## Verdict taxonomy
-
-| Verdict | Meaning |
-|---|---|
-| `Live` | Fully operational |
-| `LiveDegraded` | Running but degraded (reason printed) |
-| `InstalledNotActivated` | Installed but activation incomplete |
-| `StagedNotInstalled` | Newer package built but not installed |
-| `Inert` | Not active at runtime |
-| `Unknown` | Could not determine |
-
-## Primitives checked
-
-| Primitive | What it probes |
-|---|---|
-| `memlog` | `/dev/memlog` device node, permissions, group membership, pkgrel drift |
-| `agentns` | `/proc/self/agent_session` — all-zeros → Inert, non-zero UUID → Live |
-| `warden` | `bpolicy status` JSON — `loaded: false` → Inert |
-| `provfs` | `user.prov.session` xattr — `comm:` fallback form → LiveDegraded |
-
-## Workspace layout
-
-```
-quicken/
-├── quicken-probe/   # lib crate: Verdict, Evidence, PrimitiveReport, Probe trait
-└── quicken/         # binary crate: `quicken` CLI
-```
-
-Sibling PRDs `quicken-attest`, `quicken-crossdep`, and `quicken-remedy` extend this workspace.
-
-## Acceptance criteria (all 7 MUST ACs satisfied)
-
-1. `cargo build --release` produces `quicken`; `quicken probe --help` lists `--json`.
-2. All four probes return correct verdicts against fixture `ProbeEnv` (golden tests).
-3. `MemlogProbe` returns `StagedNotInstalled` for fixture pkgrel 5-vs-11 with both pkgrels in evidence.
-4. `quicken probe --json` emits valid JSON round-trippable as `Vec<PrimitiveReport>`.
-5. Exit non-zero when any verdict is worse than `LiveDegraded`; zero when all acceptable.
-6. No probe panics on missing surfaces — maps to `Unknown`/`Inert`, never crashes.
-7. Tests perform zero network access and zero writes outside the test tmpdir.
 
 ## License
 
-Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at your option.
+MIT © Joe Yen
