@@ -11,6 +11,7 @@
 //!   quicken attest             — probe + write receipt + print delta/streaks
 //!   quicken attest --json      — machine-readable attest output
 //!   quicken attest --no-write  — probe + print delta/streaks without writing
+//!   quicken watch --once       — probe + publish verdicts to wm.health.primitive.*
 //!
 //! Exit codes:
 //!   0 — all primitives are `Live` or `LiveDegraded` (probe); or remediation succeeded
@@ -18,6 +19,7 @@
 //!   2 — internal error (should not occur in normal use)
 
 mod remedy;
+mod watch;
 
 use std::process;
 
@@ -40,6 +42,9 @@ fn main() {
         Command::Deps => run_deps(),
         Command::Remedy { apply, json } => run_remedy(apply, json),
         Command::Attest { json, no_write } => run_attest(json, no_write),
+        Command::Watch { once: _, format, require_bus } => {
+            run_watch(format.as_deref() == Some("json"), require_bus)
+        }
     };
     process::exit(exit_code);
 }
@@ -141,6 +146,42 @@ enum Command {
         /// Compute and print results without writing a receipt file.
         #[arg(long = "no-write")]
         no_write: bool,
+    },
+
+    /// Probe primitives and publish each verdict to agorabus on wm.health.primitive.<name>.
+    ///
+    /// Runs the full Fleet-1 probe set, collects each Primitive/Verdict/Evidence,
+    /// and publishes one event per primitive to `wm.health.primitive.<name>` via
+    /// `agorabus publish`. Pure observe-and-announce; never enforces or heals.
+    ///
+    /// Topic: `wm.health.primitive.<name>`
+    /// Payload: `{"subject":"primitive.<name>","verdict":"<verdict>",
+    ///            "evidence_digest":"<8hex>","inert_streak":<n>,
+    ///            "blocked_by":[...],"ts":"<rfc3339>"}`
+    ///
+    /// Exit codes: 0=probe-and-publish-ok (verdicts are data, not errors);
+    ///   1=bus-unreachable (only when --require-bus); 2=internal-error
+    Watch {
+        /// Run the probe set once and exit (required for now; future: daemon mode).
+        ///
+        /// This flag exists to make the intent explicit and to reserve the no-flag
+        /// form for a future daemon / continuous mode.
+        #[arg(long, required = true)]
+        once: bool,
+
+        /// Output format for published events echoed to stdout.
+        ///
+        /// `json` — emit each published event as a JSON line to stdout (for
+        /// the self-review playbook and for testing without a live bus).
+        #[arg(long, value_name = "FORMAT", value_parser = ["json"])]
+        format: Option<String>,
+
+        /// Exit non-zero if the agorabus daemon is unreachable or publish fails.
+        ///
+        /// Without this flag, bus failures are logged and the run exits 0
+        /// (fail-open). Use `--require-bus` when you need guaranteed delivery.
+        #[arg(long)]
+        require_bus: bool,
     },
 }
 
@@ -447,6 +488,17 @@ fn verdict_display(v: &Verdict) -> String {
         Verdict::Inert => "Inert".into(),
         _ => "Unknown".into(),
     }
+}
+
+/// Run the watch subcommand: probe + publish to agorabus.
+fn run_watch(format_json: bool, require_bus: bool) -> i32 {
+    use watch::{AgorabusBinPublisher, WatchOptions, WatchOutcome};
+    let opts = WatchOptions { require_bus, format_json };
+    let outcome = watch::run_watch(&opts, &AgorabusBinPublisher);
+    if !format_json && outcome == WatchOutcome::Ok {
+        eprintln!("quicken watch: published verdicts for 4 primitives");
+    }
+    outcome.exit_code()
 }
 
 /// Summarize evidence key/value pairs into a one-liner.

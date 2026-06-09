@@ -1,0 +1,15 @@
+[Unit]
+Description=Quicken primitive liveness watch (oneshot probe + publish)
+Documentation=https://github.com/j0yen/quicken
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.cargo/bin/quicken watch --once
+StandardOutput=journal
+StandardError=journal
+# Fail-open by default: bus unreachable is logged, not fatal.
+# Add --require-bus to ExecStart to make bus failure exit non-zero.
+
+[Install]
+WantedBy=default.target
