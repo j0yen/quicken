@@ -31,6 +31,17 @@ pub enum Verdict {
     /// (e.g. `/proc/self/agent_session` returns all-zeros).
     Inert,
 
+    /// The kernel mechanism works (assay confirms it creates a namespace
+    /// successfully) but the live process was not wrapped at launch.
+    ///
+    /// Remediation: wrap the launch (e.g. `onramp claude-agentns-wrap`).
+    /// This verdict only appears for agentns when `assay agentns --json`
+    /// reports `Live` but the live session reads all-zeros.
+    MechanismLiveNotWired {
+        /// Human-readable remediation advice.
+        remediation: String,
+    },
+
     /// The probe could not determine liveness because a required surface was
     /// absent, unreadable, or returned unexpected data.
     Unknown,
@@ -79,5 +90,13 @@ mod tests {
     #[test]
     fn unknown_not_acceptable() {
         assert!(!Verdict::Unknown.is_acceptable());
+    }
+
+    #[test]
+    fn mechanism_live_not_wired_not_acceptable() {
+        assert!(!Verdict::MechanismLiveNotWired {
+            remediation: "wrap the launch".into()
+        }
+        .is_acceptable());
     }
 }

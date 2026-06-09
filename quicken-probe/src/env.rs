@@ -27,6 +27,12 @@ pub struct ProbeEnv {
     /// Optional: path to a `bpolicy status` output fixture file.
     /// When `Some`, `WardenProbe` reads this file instead of running `bpolicy`.
     pub bpolicy_status_fixture: Option<PathBuf>,
+    /// Optional override for the `assay` binary path.
+    ///
+    /// When `None` (the default), `AgentnsProbe` searches `$PATH` for `assay`.
+    /// Tests inject an explicit fixture script path here so the probe never
+    /// touches the real `assay` binary.
+    pub assay_path: Option<PathBuf>,
 }
 
 impl Default for ProbeEnv {
@@ -42,6 +48,7 @@ impl Default for ProbeEnv {
                 .join("wintermute/wintermute-kernel/pkg"),
             bpolicy_path: home.join(".local/bin/bpolicy"),
             bpolicy_status_fixture: None,
+            assay_path: None,
         }
     }
 }
@@ -86,6 +93,16 @@ impl ProbeEnv {
     #[must_use]
     pub fn with_bpolicy_fixture(mut self, path: impl Into<PathBuf>) -> Self {
         self.bpolicy_status_fixture = Some(path.into());
+        self
+    }
+
+    /// Override the `assay` binary path (for testing).
+    ///
+    /// Tests should inject a fixture shell script that emits a known JSON
+    /// payload so `AgentnsProbe` bridge logic can be exercised deterministically.
+    #[must_use]
+    pub fn with_assay_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.assay_path = Some(path.into());
         self
     }
 
