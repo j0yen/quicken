@@ -1,0 +1,15 @@
+[Unit]
+Description=Quicken primitive liveness watch timer
+Documentation=https://github.com/j0yen/quicken
+
+[Timer]
+# Run 2 minutes after each boot (let all services settle first).
+OnBootSec=2min
+# Re-run every 30 minutes to catch mid-day transitions within the window.
+OnUnitActiveSec=30min
+# Jitter to avoid thundering-herd on multi-machine fleets.
+RandomizedDelaySec=30s
+Unit=quicken-watch.service
+
+[Install]
+WantedBy=timers.target

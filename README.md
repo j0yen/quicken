@@ -34,6 +34,36 @@ per-primitive **inert-streak counter** so a primitive that stays dark gets
    tmpdir** (cloud-build-safe); `boot_id` and clock are injected, never read from
    the real host in tests (consistent with the no-`Date::now` constraint).
 
+## quicken watch — continuous mid-day liveness publishing
+
+`quicken watch --once` runs the full probe set and publishes each verdict to
+agorabus on `wm.health.primitive.<name>`, using the existing `wm.health.*`
+envelope. Pair with the provided systemd-user units for automatic mid-day
+coverage:
+
+```sh
+# Copy units to the user systemd directory.
+cp scripts/quicken-watch.service ~/.config/systemd/user/
+cp scripts/quicken-watch.timer   ~/.config/systemd/user/
+
+# Enable and start the timer (runs 2 min after boot, then every 30 min).
+systemctl --user enable --now quicken-watch.timer
+```
+
+**Boundary**: `wintermute_watchdog` watches daemon heartbeat liveness.
+`quicken-watch` watches a disjoint axis — kernel/userspace primitive liveness
+(`primitive.<name>` subject namespace). Same envelope, no overlap.
+
+**Flags**:
+
+| Flag | Description |
+|------|-------------|
+| `--once` | Required; run probe set once and exit. |
+| `--format json` | Also emit published events as a JSON array on stdout. |
+| `--require-bus` | Exit non-zero if the bus is unreachable (default: fail-open). |
+
+**Published topic**: `wm.health.primitive.<name>` (one event per primitive).
+
 ## Install
 
 ```sh

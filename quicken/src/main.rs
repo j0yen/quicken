@@ -11,6 +11,7 @@
 //!   quicken attest             — probe + write receipt + print delta/streaks
 //!   quicken attest --json      — machine-readable attest output
 //!   quicken attest --no-write  — probe + print delta/streaks without writing
+//!   quicken watch --once       — probe all primitives and publish verdicts to agorabus
 //!
 //! Exit codes:
 //!   0 — all primitives are `Live` or `LiveDegraded` (probe); or remediation succeeded
@@ -18,6 +19,7 @@
 //!   2 — internal error (should not occur in normal use)
 
 mod remedy;
+mod watch;
 
 use std::process;
 
@@ -40,6 +42,15 @@ fn main() {
         Command::Deps => run_deps(),
         Command::Remedy { apply, json } => run_remedy(apply, json),
         Command::Attest { json, no_write } => run_attest(json, no_write),
+        Command::Watch { once: _, format, require_bus } => {
+            let opts = watch::WatchOptions {
+                json_format: format.as_deref() == Some("json"),
+                require_bus,
+                agorabus_bin: "agorabus".to_owned(),
+            };
+            let publisher = watch::ShellBusPublisher { bin: opts.agorabus_bin.clone() };
+            watch::run_watch(&opts, &publisher)
+        }
     };
     process::exit(exit_code);
 }
@@ -55,6 +66,10 @@ fn main() {
     version = env!("CARGO_PKG_VERSION"),
     about = "Wintermute kernel primitive liveness checker",
     long_about = "Classifies every wintermute kernel primitive's liveness.\n\
+    \n\
+    The `watch --once` subcommand publishes each verdict to agorabus on\n\
+    `wm.health.primitive.<name>` — same envelope as wintermute_watchdog.\n\
+    Pair with the quicken-watch.timer unit for continuous mid-day coverage.\n\
     \n\
     Primitives checked:\n  \
       memlog   — /dev/memlog device node (memlog kernel module)\n  \
@@ -141,6 +156,36 @@ enum Command {
         /// Compute and print results without writing a receipt file.
         #[arg(long = "no-write")]
         no_write: bool,
+    },
+
+    /// Run all probes and publish each verdict to agorabus.
+    ///
+    /// Publishes one event per primitive to `wm.health.primitive.<name>` on
+    /// the `wm.health.*` envelope (same schema as `wintermute_watchdog`).
+    ///
+    /// Fail-open: if the bus is unreachable, exits 0 and logs a notice.
+    /// Use `--require-bus` to exit non-zero on bus failure instead.
+    ///
+    /// Pair with `quicken-watch.service` / `quicken-watch.timer` for
+    /// automatic mid-day liveness publishing.
+    ///
+    /// Exit codes: 0=published (or fail-open), 1=bus error with --require-bus, 2=internal error
+    Watch {
+        /// Required flag — run the probe set once and exit.
+        ///
+        /// (Reserved for future `--watch` long-running mode; currently --once is required.)
+        #[arg(long = "once", required = true)]
+        once: bool,
+
+        /// Output format: `json` emits the published events as a JSON array on stdout.
+        ///
+        /// Published topic: `wm.health.primitive.<name>`
+        #[arg(long, value_name = "FORMAT")]
+        format: Option<String>,
+
+        /// Exit non-zero if the bus is unreachable instead of logging and continuing.
+        #[arg(long = "require-bus")]
+        require_bus: bool,
     },
 }
 
