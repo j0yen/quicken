@@ -1,14 +1,14 @@
 [Unit]
-Description=Quicken primitive liveness watch — periodic timer
+Description=Quicken primitive liveness watch timer
 Documentation=https://github.com/j0yen/quicken
-After=network.target
 
 [Timer]
-# Fire 2 minutes after boot so the bus daemon is settled.
+# Run 2 minutes after each boot (let all services settle first).
 OnBootSec=2min
-# Re-check every 30 minutes (catches mid-day primitive transitions).
-# Far cheaper than a daemon — oneshot per interval.
+# Re-run every 30 minutes to catch mid-day transitions within the window.
 OnUnitActiveSec=30min
+# Jitter to avoid thundering-herd on multi-machine fleets.
+RandomizedDelaySec=30s
 Unit=quicken-watch.service
 
 [Install]

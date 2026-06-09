@@ -1,15 +1,27 @@
 [Unit]
-Description=Quicken primitive liveness watch (oneshot probe + publish)
+Description=Quicken primitive liveness watch (oneshot)
 Documentation=https://github.com/j0yen/quicken
-After=network.target
+# Run after the agorabus daemon is available (best-effort; fail-open if bus is down).
+After=agorabus.service
+Wants=agorabus.service
 
 [Service]
 Type=oneshot
-ExecStart=%h/.cargo/bin/quicken watch --once
-StandardOutput=journal
-StandardError=journal
-# Fail-open by default: bus unreachable is logged, not fatal.
-# Add --require-bus to ExecStart to make bus failure exit non-zero.
+ExecStart=%h/.local/bin/quicken watch --once
+# Fail-open: exit 0 even when the bus is unreachable.
+# Add --require-bus to ExecStart above to change this behaviour.
+SuccessExitStatus=0
+
+# Minimal sandbox — quicken watch is read-only.
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/quicken
+
+# Resource limits.
+MemoryMax=64M
+CPUQuota=20%
 
 [Install]
 WantedBy=default.target
