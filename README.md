@@ -64,6 +64,45 @@ systemctl --user enable --now quicken-watch.timer
 
 **Published topic**: `wm.health.primitive.<name>` (one event per primitive).
 
+## agentns verdicts and the optional `assay` integration
+
+The `AgentnsProbe` reads `/proc/self/agent_session`. When the file contains
+all-zeros it knows the session is inert, but it cannot on its own tell whether:
+
+- **the kernel flag is broken** (the mechanism itself is rejected by the kernel), or
+- **the launch is not wrapped** (the kernel works but the process was started
+  without the agentns wrapper).
+
+When `assay` is on `$PATH` (or injected via `ProbeEnv::with_assay_path`), the
+probe shells out to `assay agentns --json` exactly once per run (and only when
+the session reads all-zeros) to get an active attestation. This enriches the
+verdict:
+
+| `assay agentns` result | quicken verdict | Evidence fields added |
+|---|---|---|
+| `FlagRejected` (kernel rejects `CLONE_NEWAGENT`) | `Inert` | `cause`, `remediation` ("PRD-agentns-clone-flag-fix; launch-wrap will not help"), `assay_compiled_flag`, `assay_collides_with`, `assay_unshare_errno` |
+| `Live` (kernel works; process not wrapped) | `MechanismLiveNotWired` | `remediation` ("wrap the launch (onramp claude-agentns-wrap)") |
+| absent / error | `Inert` (no enrichment) | — |
+
+The `assay` dependency is **optional and fail-open**: if `assay` is absent or
+returns a non-zero exit code the probe falls back to the same plain `Inert`
+verdict it has always produced.
+
+### Before the kernel fix (current state)
+
+```
+agentns: Inert
+  cause: kernel rejects CLONE_NEWAGENT (flag 0x100 == CLONE_VM), errno EINVAL
+  remediation: PRD-agentns-clone-flag-fix; launch-wrap will not help
+```
+
+### After the kernel fix (once PRD-agentns-clone-flag-fix lands)
+
+```
+agentns: MechanismLiveNotWired
+  remediation: wrap the launch (onramp claude-agentns-wrap)
+```
+
 ## Install
 
 ```sh
