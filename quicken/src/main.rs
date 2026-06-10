@@ -12,12 +12,15 @@
 //!   quicken attest --json      — machine-readable attest output
 //!   quicken attest --no-write  — probe + print delta/streaks without writing
 //!   quicken watch --once       — probe all primitives and publish verdicts to agorabus
+//!   quicken notify --once      — emit any pending darkening-transition signals, then exit
+//!   quicken notify --watch     — long-lived bus subscriber; fires on darkening edges
 //!
 //! Exit codes:
 //!   0 — all primitives are `Live` or `LiveDegraded` (probe); or remediation succeeded
 //!   1 — at least one primitive is worse than `LiveDegraded`
 //!   2 — internal error (should not occur in normal use)
 
+mod notify;
 mod remedy;
 mod watch;
 
@@ -51,6 +54,13 @@ fn main() {
             let publisher = watch::ShellBusPublisher { bin: opts.agorabus_bin.clone() };
             watch::run_watch(&opts, &publisher)
         }
+        Command::Notify {
+            once,
+            watch,
+            streak_threshold,
+            notify_recovery,
+            ping,
+        } => run_notify(once, watch, streak_threshold, notify_recovery, ping),
     };
     process::exit(exit_code);
 }
@@ -186,6 +196,55 @@ enum Command {
         /// Exit non-zero if the bus is unreachable instead of logging and continuing.
         #[arg(long = "require-bus")]
         require_bus: bool,
+    },
+
+    /// Subscribe to `wm.health.primitive.*` and surface darkening transitions.
+    ///
+    /// Fires one signal per *new* darkening edge (live → dark) or streak crossing.
+    /// Debounced: a primitive already dark at the same verdict is silent.
+    ///
+    /// Signal format (stdout): `quicken: ⚠ <name> went dark (streak N) — quicken remedy <name>`
+    ///
+    /// State is persisted in `~/.local/state/quicken/notify.json`
+    /// (or `$QUICKEN_NOTIFY_STATE`). A missing/corrupt file is treated as
+    /// first-seen (fail-open, no panic).
+    ///
+    /// **Modes** (exactly one required):
+    ///   --once   Read the latest attest receipt, emit pending signals, exit.
+    ///            Use this in SessionStart hooks for the banner fragment.
+    ///   --watch  Long-lived; subscribe to agorabus, process events in a loop.
+    ///            Pair with `quicken-notify.service` (see scripts/).
+    ///
+    /// Exit codes: 0=ok, 1=bus error, 2=internal error
+    Notify {
+        /// Emit pending transition signals from the latest attest receipt, then exit.
+        ///
+        /// Suitable for SessionStart hook use.
+        #[arg(long = "once", conflicts_with = "watch")]
+        once: bool,
+
+        /// Long-lived mode: subscribe to agorabus `wm.health.primitive.` and
+        /// process each incoming event. Runs until killed.
+        #[arg(long = "watch", conflicts_with = "once")]
+        watch: bool,
+
+        /// Inert-streak count at which a threshold-crossing notification fires.
+        ///
+        /// Default: 3 (matches the self-review 3-run escalation convention).
+        #[arg(long = "streak-threshold", default_value_t = notify::DEFAULT_STREAK_THRESHOLD, value_name = "N")]
+        streak_threshold: u32,
+
+        /// Emit a recovery signal when a dark → live edge is observed.
+        ///
+        /// Off by default (recovery is good news; opt-in to celebrate).
+        #[arg(long = "notify-recovery")]
+        notify_recovery: bool,
+
+        /// Invoke `peon-ping` on a darkening transition.
+        ///
+        /// Off by default. Produces an audible notification when set.
+        #[arg(long = "ping")]
+        ping: bool,
     },
 }
 
@@ -504,4 +563,38 @@ fn evidence_summary(ev: &quicken_probe::Evidence) -> String {
         .map(|p| format!("{}={}", p.key, p.value))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// Run the notify subcommand.
+fn run_notify(
+    once: bool,
+    watch_mode: bool,
+    streak_threshold: u32,
+    notify_recovery: bool,
+    ping: bool,
+) -> i32 {
+    if !once && !watch_mode {
+        eprintln!("quicken notify: one of --once or --watch is required.");
+        eprintln!("  --once   emit pending signals from the latest attest receipt, then exit");
+        eprintln!("  --watch  long-lived agorabus subscriber");
+        return 2;
+    }
+
+    let opts = notify::NotifyOptions {
+        state_path: notify::EdgeState::default_path(),
+        streak_threshold,
+        notify_recovery,
+        ping,
+        agorabus_bin: "agorabus".to_owned(),
+    };
+
+    let pinger = notify::ShellPingEmitter;
+
+    if once {
+        let events = notify::events_from_attest();
+        notify::run_once(&events, &opts, &pinger)
+    } else {
+        // watch_mode
+        notify::run_watch(&opts, &pinger)
+    }
 }

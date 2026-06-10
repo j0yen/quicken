@@ -1,0 +1,18 @@
+[Unit]
+Description=quicken notify — darkening-transition reporter
+Documentation=https://github.com/j0yen/quicken
+After=agorabus.service
+Wants=agorabus.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/quicken notify --watch
+Restart=always
+RestartSec=5
+# Allow fast restart if the bus bounces; Restart=always means it self-heals
+# even if the bus goes down temporarily.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
