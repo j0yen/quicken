@@ -40,7 +40,9 @@ enum AssayVerdict {
     },
     /// Kernel accepted the call and a new namespace was created.
     Live {
+        /// Additional detail from assay (forward-compat capture; not currently inspected).
         #[serde(default)]
+        #[allow(dead_code)]
         detail: serde_json::Value,
     },
     /// Any other verdict we don't specifically handle.

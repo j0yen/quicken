@@ -1,5 +1,5 @@
 //! `notify` subcommand — subscribe to `wm.health.primitive.*` and surface
-//! darkening transitions as SessionStart banner fragments and optional peon-ping.
+//! darkening transitions as `SessionStart` banner fragments and optional peon-ping.
 // This is a binary-internal module; `pub` items are visible only within the crate.
 #![allow(unreachable_pub)]
 //!
@@ -9,7 +9,7 @@
 //!
 //! - **`--once`**: reads the edge-state store, consults the latest quicken-attest
 //!   receipt (or a supplied fixture stream), emits one line per *new* darkening
-//!   transition, then exits. Used by the SessionStart hook.
+//!   transition, then exits. Used by the `SessionStart` hook.
 //!
 //! - **`--watch`**: long-lived; subscribes via `agorabus subscribe
 //!   wm.health.primitive.` and processes each event in a loop, checking for
@@ -64,9 +64,8 @@ impl EdgeState {
     /// Load the edge-state from `path`, or return a default (fail-open) on any error.
     #[must_use]
     pub fn load(path: &Path) -> Self {
-        let text = match std::fs::read_to_string(path) {
-            Ok(t) => t,
-            Err(_) => return Self::default(),
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return Self::default();
         };
         serde_json::from_str(&text).unwrap_or_default()
     }
@@ -129,10 +128,7 @@ pub fn is_darkening_edge(from: Option<&str>, to: &str) -> bool {
 /// Returns `true` if a transition from `from` to `to` is a recovery edge.
 #[must_use]
 pub fn is_recovery_edge(from: Option<&str>, to: &str) -> bool {
-    match from {
-        Some(prev) if is_dark(prev) && !is_dark(to) => true,
-        _ => false,
-    }
+    matches!(from, Some(prev) if is_dark(prev) && !is_dark(to))
 }
 
 // ── Event types ───────────────────────────────────────────────────────────────
@@ -287,7 +283,7 @@ pub fn classify_event(
     None
 }
 
-/// Apply an event to the edge state (updating last_verdict and last_streak_fired).
+/// Apply an event to the edge state (updating `last_verdict` and `last_streak_fired`).
 pub fn apply_event_to_state(event: &HealthEvent, state: &mut EdgeState) {
     let name = event.primitive_name().to_owned();
     state.last_verdict.insert(name.clone(), event.verdict.clone());
@@ -339,14 +335,12 @@ pub fn events_from_attest() -> Vec<HealthEvent> {
     let store_path = quicken_attest::ReceiptStore::default_path();
     let store = quicken_attest::ReceiptStore::new(&store_path);
 
-    let history = match store.load_all() {
-        Ok(h) => h,
-        Err(_) => return Vec::new(),
+    let Ok(history) = store.load_all() else {
+        return Vec::new();
     };
 
-    let latest = match history.last() {
-        Some(r) => r,
-        None => return Vec::new(),
+    let Some(latest) = history.last() else {
+        return Vec::new();
     };
 
     // Compute current streaks from history.
@@ -409,12 +403,9 @@ pub fn run_watch(opts: &NotifyOptions, pinger: &dyn PingEmitter) -> i32 {
         }
     };
 
-    let stdout = match child.stdout.take() {
-        Some(s) => s,
-        None => {
-            eprintln!("quicken notify --watch: failed to get agorabus stdout");
-            return 2;
-        }
+    let Some(stdout) = child.stdout.take() else {
+        eprintln!("quicken notify --watch: failed to get agorabus stdout");
+        return 2;
     };
 
     let reader = BufReader::new(stdout);

@@ -60,7 +60,13 @@ fn main() {
             streak_threshold,
             notify_recovery,
             ping,
-        } => run_notify(once, watch, streak_threshold, notify_recovery, ping),
+        } => run_notify(&NotifyArgs {
+            once,
+            watch_mode: watch,
+            streak_threshold,
+            notify_recovery,
+            ping,
+        }),
     };
     process::exit(exit_code);
 }
@@ -211,7 +217,7 @@ enum Command {
     ///
     /// **Modes** (exactly one required):
     ///   --once   Read the latest attest receipt, emit pending signals, exit.
-    ///            Use this in SessionStart hooks for the banner fragment.
+    ///            Use this in `SessionStart` hooks for the banner fragment.
     ///   --watch  Long-lived; subscribe to agorabus, process events in a loop.
     ///            Pair with `quicken-notify.service` (see scripts/).
     ///
@@ -219,7 +225,7 @@ enum Command {
     Notify {
         /// Emit pending transition signals from the latest attest receipt, then exit.
         ///
-        /// Suitable for SessionStart hook use.
+        /// Suitable for `SessionStart` hook use.
         #[arg(long = "once", conflicts_with = "watch")]
         once: bool,
 
@@ -565,15 +571,21 @@ fn evidence_summary(ev: &quicken_probe::Evidence) -> String {
         .join(" ")
 }
 
-/// Run the notify subcommand.
-fn run_notify(
+/// Arguments for the notify subcommand (consolidates the bools to avoid `clippy::too_many_arguments`).
+// Four bools are an accurate representation of four independent flag args; struct-excessive-bools
+// fires but there's no better way to model four independent CLI switches.
+#[allow(clippy::struct_excessive_bools)]
+struct NotifyArgs {
     once: bool,
     watch_mode: bool,
     streak_threshold: u32,
     notify_recovery: bool,
     ping: bool,
-) -> i32 {
-    if !once && !watch_mode {
+}
+
+/// Run the notify subcommand.
+fn run_notify(args: &NotifyArgs) -> i32 {
+    if !args.once && !args.watch_mode {
         eprintln!("quicken notify: one of --once or --watch is required.");
         eprintln!("  --once   emit pending signals from the latest attest receipt, then exit");
         eprintln!("  --watch  long-lived agorabus subscriber");
@@ -582,15 +594,15 @@ fn run_notify(
 
     let opts = notify::NotifyOptions {
         state_path: notify::EdgeState::default_path(),
-        streak_threshold,
-        notify_recovery,
-        ping,
+        streak_threshold: args.streak_threshold,
+        notify_recovery: args.notify_recovery,
+        ping: args.ping,
         agorabus_bin: "agorabus".to_owned(),
     };
 
     let pinger = notify::ShellPingEmitter;
 
-    if once {
+    if args.once {
         let events = notify::events_from_attest();
         notify::run_once(&events, &opts, &pinger)
     } else {

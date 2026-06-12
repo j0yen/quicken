@@ -16,19 +16,19 @@ use serde::{Deserialize, Serialize};
 
 /// A single published health event, matching the `wm.health.*` envelope.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HealthEvent {
+pub(crate) struct HealthEvent {
     /// Subject namespace: `primitive.<name>`.
-    pub subject: String,
+    pub(crate) subject: String,
     /// Verdict string from the closed set.
-    pub verdict: String,
+    pub(crate) verdict: String,
     /// Short SHA-256 hash (8 hex chars) of the serialized evidence.
-    pub evidence_digest: String,
+    pub(crate) evidence_digest: String,
     /// Inert streak from quicken-attest receipts, or 0 when absent.
-    pub inert_streak: u32,
+    pub(crate) inert_streak: u32,
     /// Names of primitives blocking this one (from dep graph).
-    pub blocked_by: Vec<String>,
+    pub(crate) blocked_by: Vec<String>,
     /// RFC 3339 timestamp of when the probe ran.
-    pub ts: String,
+    pub(crate) ts: String,
 }
 
 /// Serialise verdict to a lowercase-kebab string matching the envelope spec.
@@ -64,13 +64,13 @@ fn evidence_digest(report: &quicken_probe::PrimitiveReport) -> String {
 
 /// Options for the watch subcommand (mirrored from CLI args).
 #[derive(Debug, Clone)]
-pub struct WatchOptions {
+pub(crate) struct WatchOptions {
     /// Emit published events as JSON to stdout.
-    pub json_format: bool,
+    pub(crate) json_format: bool,
     /// Exit non-zero when the bus is unreachable.
-    pub require_bus: bool,
+    pub(crate) require_bus: bool,
     /// Path to the agorabus binary (defaults to "agorabus", looked up on PATH).
-    pub agorabus_bin: String,
+    pub(crate) agorabus_bin: String,
 }
 
 impl Default for WatchOptions {
@@ -84,7 +84,7 @@ impl Default for WatchOptions {
 }
 
 /// Trait for publishing to agorabus, injectable for testing.
-pub trait BusPublisher {
+pub(crate) trait BusPublisher {
     /// Publish `payload` (JSON string) on `topic`.
     ///
     /// Returns `Ok(())` on success, `Err(msg)` on failure.
@@ -92,9 +92,9 @@ pub trait BusPublisher {
 }
 
 /// Production publisher that shells out to the `agorabus publish` CLI.
-pub struct ShellBusPublisher {
+pub(crate) struct ShellBusPublisher {
     /// Path to the agorabus binary.
-    pub bin: String,
+    pub(crate) bin: String,
 }
 
 impl BusPublisher for ShellBusPublisher {
@@ -119,7 +119,7 @@ impl BusPublisher for ShellBusPublisher {
 ///
 /// Returns an exit code: 0 on success; non-zero on internal error or bus failure
 /// when `opts.require_bus` is set.
-pub fn run_watch(opts: &WatchOptions, publisher: &dyn BusPublisher) -> i32 {
+pub(crate) fn run_watch(opts: &WatchOptions, publisher: &dyn BusPublisher) -> i32 {
     let env = ProbeEnv::default();
     let probes: Vec<Box<dyn Probe>> = vec![
         Box::new(MemlogProbe),
@@ -164,11 +164,11 @@ pub fn run_watch(opts: &WatchOptions, publisher: &dyn BusPublisher) -> i32 {
             }
         };
 
-        let mut published = false;
+        let mut sent = false;
         for attempt in 0..2u32 {
             match publisher.publish(&topic, &payload) {
                 Ok(()) => {
-                    published = true;
+                    sent = true;
                     break;
                 }
                 Err(e) if attempt == 0 => {
@@ -181,9 +181,8 @@ pub fn run_watch(opts: &WatchOptions, publisher: &dyn BusPublisher) -> i32 {
             }
         }
 
-        if !published && !bus_errors.is_empty() {
-            // Already recorded in bus_errors.
-        }
+        // sent only used for the logic above; bus_errors already records failures.
+        let _ = sent;
 
         events.push(event);
     }
@@ -227,9 +226,8 @@ fn load_streaks() -> Vec<(String, u32)> {
     let store = quicken_attest::ReceiptStore::new(&store_path);
 
     // Use the attest streak computation on existing history.
-    let history = match store.load_all() {
-        Ok(h) => h,
-        Err(_) => return Vec::new(),
+    let Ok(history) = store.load_all() else {
+        return Vec::new();
     };
 
     if history.is_empty() {
@@ -237,9 +235,8 @@ fn load_streaks() -> Vec<(String, u32)> {
     }
 
     // Get streaks from the most recent receipt's reports.
-    let latest = match history.last() {
-        Some(r) => r,
-        None => return Vec::new(),
+    let Some(latest) = history.last() else {
+        return Vec::new();
     };
 
     let streak_infos = quicken_attest::streak::compute_streaks(&latest.reports, &history);
